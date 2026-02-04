@@ -4,6 +4,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
+
+from .services.leaderboard import compute_leaderboard_mutations, get_current_month_leaderboard_positions
 from .models import Player, GameResult
 from .serializers import PlayerSerializer, GameCreateSerializer, LeaderboardEntrySerializer
 from django.conf import settings
@@ -34,13 +36,23 @@ class GameCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
+        leaderboard_before = get_current_month_leaderboard_positions()
+
         serializer = GameCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         game = serializer.save()
+
+        leaderboard_after = get_current_month_leaderboard_positions()
+
+        mutations = compute_leaderboard_mutations(
+            leaderboard_before,
+            leaderboard_after
+        )
+        
         return Response(
             {
-                "id": game.id,
-                "player_count": game.player_count
+                "player_count": game.player_count,
+                "leaderboard_mutations": mutations
             },
             status=status.HTTP_201_CREATED
         )
@@ -113,6 +125,7 @@ class LeaderboardAPIView(APIView):
 
         for player, scores in leaderboard.items():
             games_played = len(scores)
+            games_won = sum(1 for game in scores if game == 1.0)
             avg_score = sum(scores) / games_played
             reliability = games_played / (games_played + K)
             final_score = avg_score * reliability * 100
@@ -120,6 +133,7 @@ class LeaderboardAPIView(APIView):
             response_data.append({
                 "player": player,
                 "games_played": games_played,
+                "games_won": games_won,
                 "average_score": round(avg_score, 3),
                 "final_score": round(final_score, 1),
             })
@@ -128,5 +142,9 @@ class LeaderboardAPIView(APIView):
             key=lambda x: x["final_score"],
             reverse=True
         )
+
+        # Add ranking / position
+        for index, entry in enumerate(response_data, start=1):
+            entry["position"] = index
 
         return Response(response_data)

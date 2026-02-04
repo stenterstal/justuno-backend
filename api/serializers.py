@@ -67,6 +67,8 @@ class GameCreateSerializer(serializers.ModelSerializer):
 
 class LeaderboardEntrySerializer(serializers.Serializer):
     player = serializers.CharField()
+    ranking = serializers.IntegerField()
     games_played = serializers.IntegerField()
+    games_won = serializers.IntegerField()
     average_score = serializers.FloatField()
     final_score = serializers.FloatField()
