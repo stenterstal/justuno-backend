@@ -19,8 +19,6 @@ class GameResultCreateSerializer(serializers.ModelSerializer):
         model = GameResult
         fields = ("player", "position")
 
-
-
 class GameCreateSerializer(serializers.ModelSerializer):
     results = GameResultCreateSerializer(many=True)
 

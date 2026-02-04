@@ -4,9 +4,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
-
+from django.db.models import Min, Max
+from django.db.models.functions import TruncMonth
 from .services.leaderboard import compute_leaderboard_mutations, get_current_month_leaderboard_positions
-from .models import Player, GameResult
+from .models import Game, Player, GameResult
 from .serializers import PlayerSerializer, GameCreateSerializer, LeaderboardEntrySerializer
 from django.conf import settings
 from django.utils.dateparse import parse_date
@@ -148,3 +149,26 @@ class LeaderboardAPIView(APIView):
             entry["position"] = index
 
         return Response(response_data)
+
+class GameMinMaxView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Truncate played_at to first day of the month
+        truncated = Game.objects.annotate(month=TruncMonth('played_at'))
+
+        # Aggregate min and max month
+        min_max = truncated.aggregate(
+            min=Min('month'),
+            max=Max('month')
+        )
+
+        # Format as "yyyy-mm"
+        def format_ym(date):
+            return date.strftime('%Y-%m') if date else None
+
+        return Response({
+            "min": format_ym(min_max['min']),
+            "max": format_ym(min_max['max'])
+        })
