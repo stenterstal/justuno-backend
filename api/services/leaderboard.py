@@ -23,13 +23,15 @@ def get_current_month_leaderboard_positions():
     return positions
 
 
-def compute_leaderboard_mutations(before, after):
+def compute_leaderboard_mutations(game, before, after):
     mutations = []
+
+    game_player_names = game.results.values_list('player__name', flat=True)
 
     for player_name, new_position in after.items():
         old_position = before.get(player_name)
 
-        if old_position is None or old_position == new_position:
+        if old_position is None or old_position == new_position and player_name not in game_player_names:
             continue
 
         mutations.append({

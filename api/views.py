@@ -46,6 +46,7 @@ class GameCreateAPIView(APIView):
         leaderboard_after = get_current_month_leaderboard_positions()
 
         mutations = compute_leaderboard_mutations(
+            game,
             leaderboard_before,
             leaderboard_after
         )
