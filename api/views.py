@@ -70,7 +70,10 @@ class PlayerGameResultsView(generics.ListAPIView):
         except Player.DoesNotExist:
             raise NotFound(detail="Player not found")
 
-        return GameResult.objects.filter(player=player).select_related('game').order_by('-game__played_at')
+        return GameResult.objects\
+            .filter(player=player)\
+            .select_related('game')\
+            .order_by('-game__played_at')[:20]
     
 
 class LeaderboardAPIView(APIView):
