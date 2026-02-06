@@ -1,14 +1,15 @@
 from rest_framework import viewsets, status
+from rest_framework import generics
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError, NotFound
 from rest_framework.response import Response
 from django.db.models import Min, Max
 from django.db.models.functions import TruncMonth
 from .services.leaderboard import compute_leaderboard_mutations, get_current_month_leaderboard_positions
 from .models import Game, Player, GameResult
-from .serializers import PlayerSerializer, GameCreateSerializer, LeaderboardEntrySerializer
+from .serializers import GameResultSerializer, PlayerSerializer, GameCreateSerializer, LeaderboardEntrySerializer
 from django.conf import settings
 from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
@@ -59,6 +60,18 @@ class GameCreateAPIView(APIView):
             status=status.HTTP_201_CREATED
         )
 
+class PlayerGameResultsView(generics.ListAPIView):
+    serializer_class = GameResultSerializer
+
+    def get_queryset(self):
+        player_name = self.kwargs.get('player_name')
+        try:
+            player = Player.objects.get(name=player_name)
+        except Player.DoesNotExist:
+            raise NotFound(detail="Player not found")
+
+        return GameResult.objects.filter(player=player).select_related('game').order_by('-game__played_at')
+    
 
 class LeaderboardAPIView(APIView):
     authentication_classes = [TokenAuthentication]

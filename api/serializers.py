@@ -8,6 +8,20 @@ class PlayerSerializer(serializers.ModelSerializer):
         model = Player
         fields = ['name', 'uuid']
 
+class GameSerializer(serializers.ModelSerializer):
+    player_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Game
+        fields = ['played_at', 'player_count']
+
+class GameResultSerializer(serializers.ModelSerializer):
+    played_at = serializers.DateTimeField(source='game.played_at', read_only=True)
+    player_count = serializers.IntegerField(source='game.player_count', read_only=True)
+
+    class Meta:
+        model = GameResult
+        fields = ['position', 'played_at', 'player_count']
 
 class GameResultCreateSerializer(serializers.ModelSerializer):
     player = serializers.SlugRelatedField(
@@ -24,7 +38,7 @@ class GameCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Game
-        fields = ("id", "played_at", "results")
+        fields = ("played_at", "results")
 
     def validate_results(self, results):
         if len(results) < 2:
