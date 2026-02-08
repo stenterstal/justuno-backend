@@ -115,10 +115,15 @@ SPECTACULAR_SETTINGS = {
 }
 
 
-CORS_ALLOWED_ORIGINS = [
+DEFAULT_CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://10.10.20.50:5173",
 ]
+
+env_cors = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+env_cors_list = [host.strip() for host in env_cors.split(",") if host.strip()]
+
+CORS_ALLOWED_ORIGINS = DEFAULT_CORS_ALLOWED_ORIGINS + env_cors_list
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
