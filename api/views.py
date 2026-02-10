@@ -240,16 +240,13 @@ class RefreshView(APIView):
         refresh_token = refresh_token.strip('" ')
 
         try:
-            print("refresh try")
             # Decode refresh token
             refresh = RefreshToken(refresh_token)
-            print("refresh")
 
             # Get user from token
             try:
                 user_id = refresh["user_id"]
                 user = User.objects.get(pk=user_id)
-                print("user")
             except Exception:
                 return Response(
                     {"detail": "Invalid token user"},
