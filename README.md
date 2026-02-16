@@ -8,6 +8,12 @@
     <a href="https://github.com/stenterstal/justuno-backend/pkgs/container/justuno-backend">
       <img src="https://img.shields.io/badge/ghcr-justuno--backend-blue?logo=github" />
     </a>
+    <a href="https://github.com/stenterstal/justuno-backend/releases">
+      <img src="https://img.shields.io/github/v/release/stenterstal/justuno-backend?logo=github" />
+    </a>
+    <a href="https://github.com/stenterstal/justuno-backend/blob/main/LICENSE">
+      <img src="https://img.shields.io/github/license/stenterstal/justuno-backend?logo=github" />
+    </a>
   </p>
 </div>
 
