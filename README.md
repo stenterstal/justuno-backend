@@ -20,6 +20,11 @@
 # 🐳 Docker Compose
 See <a href="https://github.com/stenterstal/justuno-frontend/blob/main/docker-compose-traefik.yaml">justuno-frontend docker-compose-traefik.yaml</a>.
 
+The image runs in production mode and requires `DJANGO_SECRET_KEY` to be set. Generate one with:
+```bash
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
 # 🛠️ Developing
 ```bash
 # 1. Clone this repo
@@ -38,8 +43,8 @@ pip install -r requirements.txt
 # 5. Run db migrations
 python manage.py migrate
 
-# 6. Run server with debug
-DJANGO_DEBUG=True python manage.py runserver 0.0.0.0:8000
+# 6. Run server (debug is on by default outside Docker)
+python manage.py runserver 0.0.0.0:8000
 
 # 7. Optional: create superuser for admin portal
 python manage.py createsuperuser

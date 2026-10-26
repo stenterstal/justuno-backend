@@ -3,12 +3,12 @@ from rest_framework import generics
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from rest_framework.exceptions import ValidationError, NotFound
+from rest_framework.exceptions import AuthenticationFailed, ValidationError, NotFound
 from rest_framework.response import Response
 from django.db.models import Min, Max
 from django.db.models.functions import TruncMonth
 
-from api.util.cookies import set_auth_cookies
+from api.util.cookies import delete_auth_cookies, set_auth_cookies
 from .services.leaderboard import compute_leaderboard_mutations, get_current_month_leaderboard_positions
 from .models import Game, Player, GameResult
 from .serializers import GameResultSerializer, PlayerSerializer, GameCreateSerializer, LeaderboardEntrySerializer
@@ -18,6 +18,8 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.permissions import AllowAny
 from django.contrib.auth import get_user_model
 
@@ -200,6 +202,8 @@ class GameMinMaxView(APIView):
 class LoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
     def post(self, request):
         username = request.data.get("username")
@@ -236,56 +240,42 @@ class RefreshView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        # Strip quotes/spaces just in case
-        refresh_token = refresh_token.strip('" ')
-
+        # Validates the token, checks the user is still active,
+        # rotates the refresh token and blacklists the old one
+        serializer = TokenRefreshSerializer(data={"refresh": refresh_token.strip('" ')})
         try:
-            # Decode refresh token
-            refresh = RefreshToken(refresh_token)
-
-            # Get user from token
-            try:
-                user_id = refresh["user_id"]
-                user = User.objects.get(pk=user_id)
-            except Exception:
-                return Response(
-                    {"detail": "Invalid token user"},
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
-
-            # Generate new tokens
-            new_access = refresh.access_token
-            new_refresh = RefreshToken.for_user(user)
-
-            # Blacklist old refresh token (if blacklist enabled)
-            try:
-                refresh.blacklist()
-            except AttributeError:
-                pass
-
-            # Set cookies using your helper
-            response = Response({"detail": "Token refreshed"}, status=status.HTTP_200_OK)
-            return set_auth_cookies(response, new_access, new_refresh)
-
-        except TokenError as e:
-            print("Refresh token error:", e)
-            return Response(
+            serializer.is_valid(raise_exception=True)
+        except (TokenError, AuthenticationFailed, User.DoesNotExist):
+            response = Response(
                 {"detail": "Invalid refresh token"},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
-    
+            return delete_auth_cookies(response)
+
+        response = Response({"detail": "Token refreshed"}, status=status.HTTP_200_OK)
+        return set_auth_cookies(
+            response,
+            serializer.validated_data["access"],
+            serializer.validated_data["refresh"],
+        )
+
 
 class LogoutView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def post(self, request):
+        refresh_token = request.COOKIES.get("refresh")
+        if refresh_token:
+            try:
+                RefreshToken(refresh_token.strip('" ')).blacklist()
+            except TokenError:
+                # Already expired or blacklisted
+                pass
+
         response = Response(
             {"detail": "Logged out"},
             status=status.HTTP_200_OK,
         )
 
-        response.delete_cookie("access", path="/")
-        response.delete_cookie("refresh", path="/api/auth/refresh/")
-
-        return response
+        return delete_auth_cookies(response)

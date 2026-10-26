@@ -17,4 +17,7 @@ COPY . .
 
 RUN python manage.py collectstatic --noinput
 
+# Requires DJANGO_SECRET_KEY to be set at runtime
+ENV DJANGO_ENV=production
+
 CMD ["sh", "-c", "python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:8000"]

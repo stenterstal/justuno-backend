@@ -17,19 +17,27 @@ UNO_LEADERBOARD_K = 5
 import os
 from pathlib import Path
 from datetime import timedelta
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
+# Set to "production" by the Docker image; local runs default to development
+IS_PRODUCTION = os.getenv("DJANGO_ENV", "development") == "production"
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-4+o9c-8rl_q)qbe*nvu=xgw9mlq7h319$ph#-k9nx-pp8ts2&('
+if IS_PRODUCTION:
+    SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
+    if not SECRET_KEY:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set in production.")
+else:
+    SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-local-development-only")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DJANGO_DEBUG", "False") == "True"
+DEBUG = os.getenv("DJANGO_DEBUG", str(not IS_PRODUCTION)) == "True"
 
 DEFAULT_ALLOWED_HOSTS = ["localhost", "127.0.0.1", "10.10.20.50"]
 
@@ -87,7 +95,7 @@ TEMPLATES = [
 
 COOKIE_SECURE = not DEBUG
 
-COOKIE_SAMESITE = 'strict' if not DEBUG else 'None'
+COOKIE_SAMESITE = "Lax"
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),
@@ -112,6 +120,9 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "5/min",
+    },
 }
 
 SPECTACULAR_SETTINGS = {
