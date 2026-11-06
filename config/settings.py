@@ -120,6 +120,9 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # nginx appends the real client IP to X-Forwarded-For; only trust that last entry.
+    # Without this DRF keys throttles on the whole header, which clients can spoof.
+    "NUM_PROXIES": 1,
     "DEFAULT_THROTTLE_RATES": {
         "login": "5/min",
     },
@@ -130,11 +133,13 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Game / Player API",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAuthenticated"],
 }
 
 CORS_ALLOW_CREDENTIALS = True
 
-DEFAULT_CORS_ALLOWED_ORIGINS = [
+# Vite dev server origins, never allowed in production
+DEFAULT_CORS_ALLOWED_ORIGINS = [] if IS_PRODUCTION else [
     "http://localhost:5173",
     "http://10.10.20.50:5173",
 ]
@@ -194,7 +199,8 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# Leaderboard months follow local time, so games just after midnight count for the right month
+TIME_ZONE = 'Europe/Amsterdam'
 
 USE_I18N = True
 

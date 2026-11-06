@@ -8,6 +8,12 @@ class PlayerSerializer(serializers.ModelSerializer):
         model = Player
         fields = ['name', 'uuid']
 
+    def validate_name(self, name):
+        # The name is used as a URL path segment, where "." and ".." get resolved away
+        if not name.strip("."):
+            raise serializers.ValidationError("Name cannot consist of only dots.")
+        return name
+
 class GameSerializer(serializers.ModelSerializer):
     player_count = serializers.IntegerField(read_only=True)
 
@@ -17,7 +23,8 @@ class GameSerializer(serializers.ModelSerializer):
 
 class GameResultSerializer(serializers.ModelSerializer):
     played_at = serializers.DateTimeField(source='game.played_at', read_only=True)
-    player_count = serializers.IntegerField(source='game.player_count', read_only=True)
+    # Requires GameResult.objects.with_player_count()
+    player_count = serializers.IntegerField(source='game_player_count', read_only=True)
 
     class Meta:
         model = GameResult
@@ -46,15 +53,16 @@ class GameCreateSerializer(serializers.ModelSerializer):
                 "A game must have at least 2 players."
             )
 
-        positions = [r["position"] for r in results]
-        if len(set(positions)) != len(positions):
+        players = [r["player"] for r in results]
+        if len(set(players)) != len(players):
             raise serializers.ValidationError(
-                "Positions must be unique per game."
+                "A player can only appear once per game."
             )
 
-        if min(positions) != 1:
+        positions = sorted(r["position"] for r in results)
+        if positions != list(range(1, len(results) + 1)):
             raise serializers.ValidationError(
-                "Positions must start at 1."
+                "Positions must run from 1 to the number of players without gaps or duplicates."
             )
 
         return results
@@ -79,8 +87,8 @@ class GameCreateSerializer(serializers.ModelSerializer):
 
 class LeaderboardEntrySerializer(serializers.Serializer):
     player = serializers.CharField()
-    ranking = serializers.IntegerField()
     games_played = serializers.IntegerField()
     games_won = serializers.IntegerField()
     average_score = serializers.FloatField()
     final_score = serializers.FloatField()
+    position = serializers.IntegerField()

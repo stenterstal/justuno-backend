@@ -1,7 +1,6 @@
 import uuid
 from django.db import models
-from django.utils.timezone import make_aware
-from datetime import datetime
+from django.db.models import Count
 
 # Create your models here.
 class Player(models.Model):
@@ -14,27 +13,6 @@ class Player(models.Model):
 
     def __str__(self):
         return self.name
-    
-    def skill_score_for_month(self, year, month, K=5):
-        start = make_aware(datetime(year, month, 1))
-        if month == 12:
-            end = make_aware(datetime(year + 1, 1, 1))
-        else:
-            end = make_aware(datetime(year, month + 1, 1))
-
-        results = self.game_results.filter(
-            game__played_at__gte=start,
-            game__played_at__lt=end
-        )
-
-        scores = [r.normalized_score for r in results]
-        if not scores:
-            return 0.0
-
-        avg_score = sum(scores) / len(scores)
-        reliability = len(scores) / (len(scores) + K)
-        return avg_score * reliability * 100
-
 
 
 class Game(models.Model):
@@ -53,7 +31,13 @@ class Game(models.Model):
         return self.results.count()
     
 
-    
+
+class GameResultQuerySet(models.QuerySet):
+    def with_player_count(self):
+        # Avoids a COUNT query per result when computing normalized scores
+        return self.select_related("game").annotate(game_player_count=Count("game__results"))
+
+
 class GameResult(models.Model):
     game = models.ForeignKey(
         Game,
@@ -67,6 +51,8 @@ class GameResult(models.Model):
     )
     position = models.PositiveIntegerField()
 
+    objects = GameResultQuerySet.as_manager()
+
     class Meta:
         unique_together = ("game", "player")
         ordering = ["position"]
@@ -79,7 +65,9 @@ class GameResult(models.Model):
         """
         (N - p) / (N - 1)
         """
-        N = self.game.player_count
+        N = getattr(self, "game_player_count", None)
+        if N is None:
+            N = self.game.player_count
         if N <= 1:
             return 0.0
         return (N - self.position) / (N - 1)

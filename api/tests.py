@@ -1,18 +1,26 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.utils.timezone import localdate
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+
+from api.models import Game, GameResult, Player
 
 User = get_user_model()
 
 LOGIN_URL = "/api/auth/login/"
 REFRESH_URL = "/api/auth/refresh/"
 LOGOUT_URL = "/api/auth/logout/"
+ME_URL = "/api/auth/me/"
 PROTECTED_URL = "/api/players/"
+PLAYERS_URL = "/api/players/"
+GAMES_URL = "/api/games/"
+LEADERBOARD_URL = "/api/leaderboard/"
 
 
 class AuthTestCase(APITestCase):
@@ -102,6 +110,32 @@ class LoginTests(AuthTestCase):
 
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertNotIn("access", response.cookies)
+
+
+    def test_login_updates_last_login(self):
+        self.login()
+
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.last_login)
+
+    def test_spoofed_forwarded_for_does_not_bypass_throttle(self):
+        # nginx appends the real client IP after whatever the client sent
+        for i in range(5):
+            self.client.post(
+                LOGIN_URL,
+                {"username": "sten", "password": "wrong"},
+                format="json",
+                HTTP_X_FORWARDED_FOR=f"10.0.0.{i}, 203.0.113.7",
+            )
+
+        response = self.client.post(
+            LOGIN_URL,
+            {"username": "sten", "password": self.password},
+            format="json",
+            HTTP_X_FORWARDED_FOR="10.0.0.99, 203.0.113.7",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
 
 class CookieAuthenticationTests(AuthTestCase):
@@ -273,3 +307,190 @@ class LogoutTests(AuthTestCase):
         response = self.client.post(LOGOUT_URL)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+class MeTests(AuthTestCase):
+    def test_me_returns_current_user(self):
+        self.login()
+
+        response = self.client.get(ME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json(), {"username": "sten"})
+
+    def test_me_requires_login(self):
+        response = self.client.get(ME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class GameApiTestCase(AuthTestCase):
+    def setUp(self):
+        super().setUp()
+        self.login()
+        for name in ("Anna", "Bram", "Cas"):
+            Player.objects.create(name=name)
+
+    def create_game(self, *results):
+        return self.client.post(
+            GAMES_URL,
+            {"results": [{"player": p, "position": pos} for p, pos in results]},
+            format="json",
+        )
+
+
+class GameCreateTests(GameApiTestCase):
+    def test_valid_game_is_created(self):
+        response = self.create_game(("Anna", 1), ("Bram", 2), ("Cas", 3))
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json()["player_count"], 3)
+
+    def test_position_gaps_are_rejected(self):
+        response = self.create_game(("Anna", 1), ("Bram", 99))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(GameResult.objects.count(), 0)
+
+    def test_duplicate_positions_are_rejected(self):
+        response = self.create_game(("Anna", 1), ("Bram", 1))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_duplicate_players_are_rejected(self):
+        response = self.create_game(("Anna", 1), ("Anna", 2))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_first_game_of_month_shows_initial_ranking(self):
+        response = self.create_game(("Bram", 1), ("Anna", 2))
+
+        self.assertEqual(response.json()["leaderboard_mutations"], [
+            {"player": "Bram", "old_position": None, "new_position": 1, "delta": None},
+            {"player": "Anna", "old_position": None, "new_position": 2, "delta": None},
+        ])
+
+    def test_later_game_shows_movement(self):
+        Player.objects.create(name="Dirk")
+        # Bram 1st (100), Anna 2nd (50), Cas 3rd (0)
+        self.create_game(("Bram", 1), ("Anna", 2), ("Cas", 3))
+
+        # Averages after: Anna 0.75, Bram 0.67, Cas 0.33, Dirk 0 (new)
+        response = self.create_game(("Anna", 1), ("Cas", 2), ("Bram", 3), ("Dirk", 4))
+
+        mutations = {m["player"]: m for m in response.json()["leaderboard_mutations"]}
+        self.assertEqual(
+            (mutations["Anna"]["old_position"], mutations["Anna"]["new_position"], mutations["Anna"]["delta"]),
+            (2, 1, 1),
+        )
+        self.assertEqual(
+            (mutations["Bram"]["old_position"], mutations["Bram"]["new_position"], mutations["Bram"]["delta"]),
+            (1, 2, -1),
+        )
+        self.assertEqual(mutations["Cas"]["delta"], 0)
+        self.assertEqual(mutations["Dirk"]["new_position"], 4)
+        self.assertIsNone(mutations["Dirk"]["old_position"])
+        self.assertIsNone(mutations["Dirk"]["delta"])
+
+    def test_only_moved_players_outside_game_are_shown(self):
+        Player.objects.create(name="Dirk")
+        Player.objects.create(name="Eva")
+        # Anna 16.7, Bram 8.3, Cas 0
+        self.create_game(("Anna", 1), ("Bram", 2), ("Cas", 3))
+
+        # Cas rises to 14.3 and passes Bram; Anna stays first
+        response = self.create_game(("Cas", 1), ("Dirk", 2))
+
+        players = sorted(m["player"] for m in response.json()["leaderboard_mutations"])
+        self.assertEqual(players, ["Bram", "Cas", "Dirk"])
+
+
+class PlayerTests(GameApiTestCase):
+    def test_players_cannot_be_deleted_or_renamed(self):
+        player = Player.objects.get(name="Anna")
+        url = f"{PLAYERS_URL}{player.uuid}/"
+
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(
+            self.client.patch(url, {"name": "X"}, format="json").status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertTrue(Player.objects.filter(name="Anna").exists())
+
+    def test_dot_only_names_are_rejected(self):
+        for name in (".", ".."):
+            response = self.client.post(PLAYERS_URL, {"name": name}, format="json")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_player_games_are_listed(self):
+        self.create_game(("Anna", 1), ("Bram", 2), ("Cas", 3))
+
+        response = self.client.get(f"{PLAYERS_URL}Bram/games/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()[0]["position"], 2)
+        self.assertEqual(response.json()[0]["player_count"], 3)
+
+    def test_names_with_slashes_resolve(self):
+        Player.objects.create(name="a/b")
+        self.create_game(("a/b", 1), ("Anna", 2))
+
+        response = self.client.get(f"{PLAYERS_URL}a%2Fb/games/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()), 1)
+
+    def test_player_named_dates_resolves(self):
+        Player.objects.create(name="dates")
+        self.create_game(("dates", 1), ("Anna", 2))
+
+        response = self.client.get(f"{PLAYERS_URL}dates/games/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()), 1)
+
+    def test_anonymous_users_cannot_probe_player_names(self):
+        self.client.cookies.clear()
+
+        existing = self.client.get(f"{PLAYERS_URL}Anna/games/")
+        missing = self.client.get(f"{PLAYERS_URL}Nobody/games/")
+
+        self.assertEqual(existing.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(missing.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class LeaderboardTests(GameApiTestCase):
+    def get_leaderboard(self, start, end):
+        return self.client.get(LEADERBOARD_URL, {"start": start, "end": end})
+
+    def test_scores_and_positions(self):
+        self.create_game(("Anna", 1), ("Bram", 2), ("Cas", 3))
+        today = localdate().isoformat()
+
+        response = self.get_leaderboard(today, today)
+
+        entries = {e["player"]: e for e in response.json()}
+        self.assertEqual(entries["Anna"]["position"], 1)
+        self.assertEqual(entries["Anna"]["games_won"], 1)
+        self.assertEqual(entries["Bram"]["average_score"], 0.5)
+        self.assertEqual(entries["Cas"]["final_score"], 0.0)
+
+    def test_query_count_does_not_grow_with_games(self):
+        for _ in range(10):
+            self.create_game(("Anna", 1), ("Bram", 2), ("Cas", 3))
+        today = localdate().isoformat()
+
+        with self.assertNumQueries(2):  # user lookup + results
+            self.get_leaderboard(today, today)
+
+    def test_months_follow_local_time(self):
+        self.create_game(("Anna", 1), ("Bram", 2))
+        # 00:30 on 1 November in Amsterdam is still 31 October in UTC
+        played_at = datetime(2026, 11, 1, 0, 30, tzinfo=ZoneInfo("Europe/Amsterdam"))
+        Game.objects.update(played_at=played_at)
+
+        november = self.get_leaderboard("2026-11-01", "2026-11-30").json()
+        october = self.get_leaderboard("2026-10-01", "2026-10-31").json()
+
+        self.assertEqual(len(november), 2)
+        self.assertEqual(october, [])

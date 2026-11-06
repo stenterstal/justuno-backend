@@ -1,6 +1,5 @@
-from rest_framework import viewsets, status
+from rest_framework import mixins, viewsets, status
 from rest_framework import generics
-from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.exceptions import AuthenticationFailed, ValidationError, NotFound
@@ -9,13 +8,13 @@ from django.db.models import Min, Max
 from django.db.models.functions import TruncMonth
 
 from api.util.cookies import delete_auth_cookies, set_auth_cookies
-from .services.leaderboard import compute_leaderboard_mutations, get_current_month_leaderboard_positions
+from .services.leaderboard import compute_leaderboard, compute_leaderboard_mutations, get_current_month_leaderboard_positions
 from .models import Game, Player, GameResult
 from .serializers import GameResultSerializer, PlayerSerializer, GameCreateSerializer, LeaderboardEntrySerializer
-from django.conf import settings
 from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import update_last_login
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -25,7 +24,8 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
-class PlayerViewSet(viewsets.ModelViewSet):
+# Players can only be listed and created; renaming or deleting happens in the admin
+class PlayerViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
     queryset = Player.objects.all()
     serializer_class = PlayerSerializer
     permission_classes = [IsAuthenticated]
@@ -71,6 +71,8 @@ class GameCreateAPIView(APIView):
 
 class PlayerGameResultsView(generics.ListAPIView):
     serializer_class = GameResultSerializer
+    # Checked before get_queryset, so anonymous users can't probe player names
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         player_name = self.kwargs.get('player_name')
@@ -80,8 +82,8 @@ class PlayerGameResultsView(generics.ListAPIView):
             raise NotFound(detail="Player not found")
 
         return GameResult.objects\
+            .with_player_count()\
             .filter(player=player)\
-            .select_related('game')\
             .order_by('-game__played_at')[:20]
     
 
@@ -129,51 +131,7 @@ class LeaderboardAPIView(APIView):
         if not start_date or not end_date:
             raise ValidationError("Invalid date format. Use YYYY-MM-DD.")
 
-        K = getattr(settings, "UNO_LEADERBOARD_K", 5)
-
-        results = (
-            GameResult.objects
-            .select_related("player", "game")
-            .filter(
-                game__played_at__date__gte=start_date,
-                game__played_at__date__lte=end_date
-            )
-        )
-
-        leaderboard = {}
-
-        for r in results:
-            leaderboard.setdefault(r.player.name, []).append(
-                r.normalized_score
-            )
-
-        response_data = []
-
-        for player, scores in leaderboard.items():
-            games_played = len(scores)
-            games_won = sum(1 for game in scores if game == 1.0)
-            avg_score = sum(scores) / games_played
-            reliability = games_played / (games_played + K)
-            final_score = avg_score * reliability * 100
-
-            response_data.append({
-                "player": player,
-                "games_played": games_played,
-                "games_won": games_won,
-                "average_score": round(avg_score, 3),
-                "final_score": round(final_score, 1),
-            })
-
-        response_data.sort(
-            key=lambda x: x["final_score"],
-            reverse=True
-        )
-
-        # Add ranking / position
-        for index, entry in enumerate(response_data, start=1):
-            entry["position"] = index
-
-        return Response(response_data)
+        return Response(compute_leaderboard(start_date, end_date))
 
 class GameMinMaxView(APIView):
     permission_classes = [IsAuthenticated]
@@ -217,6 +175,8 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
+        update_last_login(None, user)
+
         refresh = RefreshToken.for_user(user)
         access = refresh.access_token
 
@@ -226,6 +186,13 @@ class LoginView(APIView):
         )
 
         return set_auth_cookies(response, access, refresh)
+
+
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({"username": request.user.get_username()})
 
 
 class RefreshView(APIView):
