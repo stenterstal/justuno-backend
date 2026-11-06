@@ -49,3 +49,21 @@ python manage.py runserver 0.0.0.0:8000
 # 7. Optional: create superuser for admin portal
 python manage.py createsuperuser
 ```
+
+# 🚀 Releasing
+Docker images are built by the <a href="https://github.com/stenterstal/justuno-backend/blob/main/.github/workflows/docker.yaml">Build workflow</a>, which runs when a GitHub release is **published**.
+
+1. Push the changes you want to release to `main`.
+2. Create a release with a new tag in `MAJOR.MINOR.PATCH` format, without a `v` prefix (e.g. `1.0.1`):
+   - **GitHub:** *Releases* → *Draft a new release* → *Choose a tag*, type the new version and pick *Create new tag on publish* (target `main`) → *Generate release notes* → *Publish release*
+   - **CLI:** `gh release create 1.0.1 --target main --generate-notes`
+3. Follow the build in the *Actions* tab. When it finishes, `ghcr.io/stenterstal/justuno-backend` has two new tags: `1.0.1` and `latest`.
+4. Update the server:
+   ```bash
+   docker compose pull && docker compose up -d
+   ```
+
+Notes:
+- Saving a release as a draft does not start a build, only publishing does.
+- *Run workflow* in the Actions tab (manual trigger) rebuilds from a branch and only updates `latest`, without a version tag.
+- The compose file uses `latest` for both images. When a change touches the API, release the <a href="https://github.com/stenterstal/justuno-frontend">frontend</a> too so both images match.
