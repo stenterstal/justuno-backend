@@ -20,6 +20,7 @@ ME_URL = "/api/auth/me/"
 PROTECTED_URL = "/api/players/"
 PLAYERS_URL = "/api/players/"
 GAMES_URL = "/api/games/"
+LATEST_GAME_URL = "/api/games/latest/"
 LEADERBOARD_URL = "/api/leaderboard/"
 
 
@@ -403,6 +404,29 @@ class GameCreateTests(GameApiTestCase):
 
         players = sorted(m["player"] for m in response.json()["leaderboard_mutations"])
         self.assertEqual(players, ["Bram", "Cas", "Dirk"])
+
+
+class LatestGameTests(GameApiTestCase):
+    def test_returns_players_of_most_recent_game(self):
+        self.create_game(("Anna", 1), ("Bram", 2), ("Cas", 3))
+        self.create_game(("Cas", 1), ("Anna", 2))
+
+        response = self.client.get(LATEST_GAME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json(), {"players": ["Cas", "Anna"]})
+
+    def test_no_games_returns_empty_list(self):
+        response = self.client.get(LATEST_GAME_URL)
+
+        self.assertEqual(response.json(), {"players": []})
+
+    def test_requires_login(self):
+        self.client.cookies.clear()
+
+        response = self.client.get(LATEST_GAME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
 class PlayerTests(GameApiTestCase):

@@ -69,6 +69,19 @@ class GameCreateAPIView(APIView):
             status=status.HTTP_201_CREATED
         )
 
+class LatestGameView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        game = Game.objects.order_by("-played_at").first()
+        if game is None:
+            return Response({"players": []})
+
+        # Results are ordered by position
+        players = game.results.values_list("player__name", flat=True)
+        return Response({"players": list(players)})
+
+
 class PlayerGameResultsView(generics.ListAPIView):
     serializer_class = GameResultSerializer
     # Checked before get_queryset, so anonymous users can't probe player names
